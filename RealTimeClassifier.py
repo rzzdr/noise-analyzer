@@ -2,16 +2,19 @@ import numpy as np
 import pandas as pd
 import sounddevice as sd
 from NoiseAnalyzer import TARGET_CLASSES, SAMPLE_RATE, DURATION, HOP_LENGTH
+from VAD import VoiceActivityDetector
 import time
 import librosa
 
 class RealTimeClassifier:
     def __init__(self, analyzer):
         self.analyzer = analyzer
+        self.vad = VoiceActivityDetector(sample_rate=SAMPLE_RATE)
         self.is_running = False
         self.predictions_log = []
         self.audio_buffer = []
         self.buffer_size = int(SAMPLE_RATE * DURATION)
+        self.calibration_phase = True
         
     def audio_callback(self, indata, frames, time, status):
         """Callback for real-time audio capture"""
@@ -135,8 +138,12 @@ class RealTimeClassifier:
             print(f"Microphone test failed: {e}")
             return
         
-        print("\nPress Ctrl+C to stop")
-        print("Predictions will be shown every second with detailed probabilities")
+        print("\n" + "="*80)
+        print("VOICE ACTIVITY DETECTION + NOISE CLASSIFICATION")
+        print("="*80)
+        print("Phase 1: VAD Calibration (3.5 seconds of silence needed)")
+        print("Phase 2: Real-time classification with VAD pre-filtering")
+        print("Press Ctrl+C to stop")
         print("-" * 80)
         
         self.is_running = True
@@ -184,17 +191,47 @@ class RealTimeClassifier:
                                 print("Warning: Invalid audio data detected, skipping...")
                                 continue
                             
-                            # Check audio levels to verify input
+                            # Check audio levels
                             audio_rms = np.sqrt(np.mean(audio_resampled**2))
                             audio_max = np.max(np.abs(audio_resampled))
                             
-                            # Make prediction
-                            predicted_class, confidence, all_probs = self.analyzer.predict_audio(audio_resampled)
-                            
-                            # Validate prediction results
-                            if not isinstance(predicted_class, str) or confidence < 0 or confidence > 1:
-                                print(f"Warning: Invalid prediction results: {predicted_class}, {confidence}")
+                            # PHASE 1: VAD Calibration
+                            if not self.vad.is_ready():
+                                calibration_complete = self.vad.add_calibration_sample(audio_resampled)
+                                progress = self.vad.get_calibration_progress()
+                                
+                                # Show calibration progress
+                                bar_length = int(progress / 100 * 40)
+                                progress_bar = "█" * bar_length + "░" * (40 - bar_length)
+                                print(f"\r🎙️ VAD Calibration: |{progress_bar}| {progress:.1f}% - Keep quiet!", end='', flush=True)
+                                
+                                if calibration_complete:
+                                    print(f"\n✅ VAD Calibration complete! Now starting noise classification...")
+                                    print("-" * 80)
                                 continue
+                            
+                            # PHASE 2: VAD Detection + Noise Classification
+                            is_activity, vad_confidence, vad_debug = self.vad.detect_activity(audio_resampled)
+                            
+                            # Debug VAD occasionally to help with troubleshooting
+                            # if prediction_count % 10 == 1 and isinstance(vad_debug, dict):
+                            #     print(f"\n🔍 VAD Debug - Energy: {vad_debug['energy']:.4f} (thresh: {self.vad.energy_threshold:.4f}), "
+                            #           f"Spectral: {vad_debug['spectral_centroid']:.1f}Hz (thresh: {self.vad.spectral_centroid_threshold:.1f}), "
+                            #           f"Activity: {is_activity}, Confidence: {vad_confidence:.3f}")
+                            
+                            if is_activity:
+                                # Voice activity detected - use NoiseAnalyzer for classification
+                                predicted_class, confidence, all_probs = self.analyzer.predict_audio(audio_resampled)
+                                
+                                # Validate prediction results
+                                if not isinstance(predicted_class, str) or confidence < 0 or confidence > 1:
+                                    print(f"Warning: Invalid prediction results: {predicted_class}, {confidence}")
+                                    continue
+                            else:
+                                # No voice activity - classify as silence
+                                predicted_class = "Silence"
+                                confidence = vad_confidence
+                                all_probs = np.zeros(len(TARGET_CLASSES))  # All zeros for non-target classes
                             
                             # Debug all_probs shape
                             if prediction_count % 20 == 1:  # Debug every 20th prediction
@@ -213,15 +250,32 @@ class RealTimeClassifier:
                                 else:
                                     all_probs = all_probs[:len(TARGET_CLASSES)]
                             
-                            # Log prediction with audio levels
+                            # Log prediction with VAD info
                             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                            
+                            # Create extended target classes including Silence for logging
+                            extended_classes = ['Silence'] + TARGET_CLASSES
+                            extended_probs = np.zeros(len(extended_classes))
+                            
+                            if predicted_class == "Silence":
+                                extended_probs[0] = confidence  # Silence confidence
+                            else:
+                                extended_probs[0] = 1 - vad_confidence  # Silence probability from VAD
+                                # Map other probabilities
+                                for i, target_class in enumerate(TARGET_CLASSES):
+                                    if i < len(all_probs):
+                                        extended_probs[i + 1] = all_probs[i]
+                            
                             self.predictions_log.append({
                                 'timestamp': timestamp,
                                 'predicted_class': predicted_class,
                                 'confidence': confidence,
-                                'all_probabilities': all_probs.tolist(),
+                                'vad_activity': is_activity,
+                                'vad_confidence': vad_confidence,
+                                'all_probabilities': extended_probs.tolist(),
                                 'audio_rms': float(audio_rms),
-                                'audio_max': float(audio_max)
+                                'audio_max': float(audio_max),
+                                'vad_debug': vad_debug if is_activity else None
                             })
                             
                             prediction_count += 1
@@ -229,37 +283,42 @@ class RealTimeClassifier:
                             # Display prediction every second (every 2 predictions due to 0.5s sleep)
                             if prediction_count % 2 == 0:
                                 print(f"\n[{timestamp}] Second #{prediction_count//2}")
-                                print(f"🎯 PREDICTION: {predicted_class} (Confidence: {confidence:.3f})")
+                                # VAD status indicator
+                                vad_icon = "🔊" if is_activity else "🔇"
+                                print(f"{vad_icon} VAD: {'Activity' if is_activity else 'Silence'} (Confidence: {vad_confidence:.3f})")
+                                print(f"🎯 CLASSIFICATION: {predicted_class} (Confidence: {confidence:.3f})")
                                 print(f"🎤 Audio Levels: RMS={audio_rms:.4f}, Max={audio_max:.4f}")
                                 
                                 # Audio level indicator
-                                level_bar_length = min(int(audio_rms * 1000), 40)  # Scale RMS for display
+                                level_bar_length = min(int(audio_rms * 1000), 40)
                                 level_bar = "█" * level_bar_length + "░" * (40 - level_bar_length)
-                                print(f"� Input Level: |{level_bar}|")
+                                print(f"📊 Input Level: |{level_bar}|")
                                 
-                                print(" All Class Probabilities:")
+                                print("📈 All Class Probabilities:")
                                 
-                                # Sort probabilities for better display - ensure all_probs is the right shape
-                                if len(all_probs) >= len(TARGET_CLASSES):
-                                    prob_pairs = [(TARGET_CLASSES[i], all_probs[i]) for i in range(len(TARGET_CLASSES))]
-                                else:
-                                    print(f"Warning: all_probs has shape {all_probs.shape}, expected at least {len(TARGET_CLASSES)} elements")
-                                    # Pad with zeros if needed
-                                    padded_probs = np.pad(all_probs, (0, max(0, len(TARGET_CLASSES) - len(all_probs))), constant_values=0.0)
-                                    prob_pairs = [(TARGET_CLASSES[i], padded_probs[i]) for i in range(len(TARGET_CLASSES))]
-                                
+                                # Display extended probabilities including Silence
+                                extended_classes = ['Silence'] + TARGET_CLASSES
+                                prob_pairs = [(extended_classes[i], extended_probs[i]) for i in range(len(extended_classes))]
                                 prob_pairs.sort(key=lambda x: x[1], reverse=True)
                                 
                                 for class_name, prob in prob_pairs:
-                                    bar_length = int(prob * 30)  # Scale to 30 characters
+                                    bar_length = int(prob * 30)
                                     bar = "█" * bar_length + "░" * (30 - bar_length)
-                                    print(f"  {class_name:<15}: {prob:.3f} |{bar}|")
+                                    icon = "🔇" if class_name == "Silence" else "🔊"
+                                    print(f"  {icon} {class_name:<15}: {prob:.3f} |{bar}|")
+                                
+                                # Show VAD debug info for activity
+                                if is_activity and vad_debug:
+                                    print(f"🔍 VAD Details: Energy={vad_debug['energy']:.4f}, "
+                                          f"Spectral={vad_debug['spectral_centroid']:.1f}Hz, "
+                                          f"ZCR={vad_debug['zcr']:.4f}")
                                 
                                 print("-" * 80)
                             else:
-                                # Show quick update with audio level
+                                # Show quick update with VAD and audio level
+                                vad_icon = "🔊" if is_activity else "🔇"
                                 level_indicator = "●" if audio_rms > 0.01 else "○"
-                                print(f"\r[{timestamp}] {predicted_class:<15} ({confidence:.3f}) {level_indicator}", end='', flush=True)
+                                print(f"\r[{timestamp}] {vad_icon} {predicted_class:<12} ({confidence:.3f}) {level_indicator}", end='', flush=True)
                         
                         except Exception as e:
                             print(f"\nPrediction error: {e}")
@@ -293,23 +352,37 @@ class RealTimeClassifier:
             
             print(f"Total predictions: {total_predictions}")
             print(f"Session duration: ~{total_predictions * 0.5:.1f} seconds")
+            
+            # VAD Statistics
+            if 'vad_activity' in df.columns:
+                vad_activity_count = df['vad_activity'].sum()
+                vad_silence_count = len(df) - vad_activity_count
+                print(f"\nVAD Statistics:")
+                print(f"  Activity detected: {vad_activity_count} samples ({vad_activity_count/total_predictions*100:.1f}%)")
+                print(f"  Silence detected: {vad_silence_count} samples ({vad_silence_count/total_predictions*100:.1f}%)")
+            
             print("\nClass Distribution:")
             
-            for class_name in TARGET_CLASSES:
+            # Include Silence in the summary
+            extended_classes = ['Silence'] + TARGET_CLASSES
+            for class_name in extended_classes:
                 count = class_counts.get(class_name, 0)
                 percentage = (count / total_predictions * 100) if total_predictions > 0 else 0
                 bar_length = int(percentage / 100 * 40)
                 bar = "█" * bar_length + "░" * (40 - bar_length)
-                print(f"  {class_name:<15}: {count:3d} ({percentage:5.1f}%) |{bar}|")
+                icon = "🔇" if class_name == "Silence" else "🔊"
+                print(f"  {icon} {class_name:<15}: {count:3d} ({percentage:5.1f}%) |{bar}|")
             
             # Average confidence per class
             print("\nAverage Confidence by Class:")
-            for class_name in TARGET_CLASSES:
+            for class_name in extended_classes:
                 class_data = df[df['predicted_class'] == class_name]
                 if len(class_data) > 0:
                     avg_conf = class_data['confidence'].mean()
-                    print(f"  {class_name:<15}: {avg_conf:.3f}")
+                    icon = "🔇" if class_name == "Silence" else "🔊"
+                    print(f"  {icon} {class_name:<15}: {avg_conf:.3f}")
                 else:
-                    print(f"  {class_name:<15}: No predictions")
+                    icon = "🔇" if class_name == "Silence" else "🔊"
+                    print(f"  {icon} {class_name:<15}: No predictions")
             
             print("="*60)

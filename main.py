@@ -3,8 +3,9 @@ from NoiseAnalyzer import NoiseAnalyzer
 from RealTimeClassifier import RealTimeClassifier
 
 def main():
-    print("5-Class Audio Classification System for Library Noise Monitoring")
-    print("="*65)
+    print("Voice Activity Detection + 4-Class Audio Classification System")
+    print("for Library Noise Monitoring")
+    print("="*70)
     
     # Initialize analyzer
     analyzer = NoiseAnalyzer()

@@ -131,8 +131,9 @@ def train_model(analyzer, features, labels, labels_raw):
     return history
 
 def main():
-    print("5-Class Audio Classification System - Training Mode")
-    print("="*50)
+    print("4-Class Audio Classification System - Training Mode")
+    print("(Silence detection handled separately by VAD)")
+    print("="*55)
     
     # Initialize analyzer
     analyzer = NoiseAnalyzer()

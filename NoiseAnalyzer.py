@@ -22,15 +22,12 @@ N_FRAMES = 100      # Fixed frame count for consistency
 # Model parameters
 LEARNING_RATE = 0.001
 
-# Class mapping from ESC-50 to target classes
+# Class mapping from ESC-50 to target classes (excluding silence - handled by VAD)
 ESC50_TO_TARGET = {
-    # Silence - low energy or actual silence
-    'breathing': 'Silence',
-    'silence': 'Silence',
-    'wind': 'Silence',
-    
     # Whispering - closest approximations
     'sneezing': 'Whispering',
+    'breathing': 'Whispering',
+    'wind': 'Whispering',
     
     # Typing sounds
     'keyboard_typing': 'Typing',
@@ -54,7 +51,7 @@ ESC50_TO_TARGET = {
     'clapping': 'Loud_talking'
 }
 
-TARGET_CLASSES = ['Silence', 'Whispering', 'Typing', 'Phone_ringing', 'Loud_talking']
+TARGET_CLASSES = ['Whispering', 'Typing', 'Phone_ringing', 'Loud_talking']
 
 class NoiseAnalyzer:
     def __init__(self, dataset_path='./ESC-50-master'):
@@ -96,8 +93,8 @@ class NoiseAnalyzer:
             else:
                 self._debug_count = 1
             
-            if self._debug_count % 20 == 1:  # Print every 20th extraction
-                print(f"\nDebug - Audio length: {len(audio)}, Mel spec shape: {mel_spec.shape}, Transposed: {mel_spec_transposed.shape}")
+            # if self._debug_count % 20 == 1:  # Print every 20th extraction
+                # print(f"\nDebug - Audio length: {len(audio)}, Mel spec shape: {mel_spec.shape}, Transposed: {mel_spec_transposed.shape}")
             
             # Ensure we have exactly N_FRAMES by taking the first N_FRAMES or padding
             if mel_spec_transposed.shape[0] >= N_FRAMES:
@@ -206,28 +203,24 @@ class NoiseAnalyzer:
         unique_labels = np.unique(labels)
         print(f"Target classes found in ESC-50: {unique_labels}")
         
-        # Add synthetic samples for missing classes to ensure all 5 classes are present
+        # Add synthetic samples for missing classes to ensure all 4 classes are present
         print("Generating synthetic samples for missing classes...")
         
-        # Add synthetic silence samples
-        for _ in range(150):
-            silence = np.random.normal(0, 0.001, int(DURATION * SAMPLE_RATE))
-            feature = self.extract_features(silence)
-            features.append(feature)
-            labels.append('Silence')
-        
         # Add synthetic whispering samples (very quiet speech-like sounds)
-        for _ in range(100):
-            # Generate quiet periodic sounds resembling whispers
-            t = np.linspace(0, DURATION, int(DURATION * SAMPLE_RATE))
-            whisper = np.random.normal(0, 0.02, len(t)) * np.sin(2 * np.pi * 200 * t) * np.exp(-t * 2)
-            feature = self.extract_features(whisper)
-            features.append(feature)
-            labels.append('Whispering')
+        if 'Whispering' not in unique_labels or len([l for l in labels if l == 'Whispering']) < 50:
+            for _ in range(120):
+                # Generate quiet periodic sounds resembling whispers
+                t = np.linspace(0, DURATION, int(DURATION * SAMPLE_RATE))
+                whisper = np.random.normal(0, 0.02, len(t)) * np.sin(2 * np.pi * 200 * t) * np.exp(-t * 2)
+                # Add some randomness to make it more realistic
+                whisper += np.random.normal(0, 0.005, len(t))
+                feature = self.extract_features(whisper)
+                features.append(feature)
+                labels.append('Whispering')
         
         # Add synthetic typing samples if not enough
-        if 'Typing' not in unique_labels:
-            for _ in range(80):
+        if 'Typing' not in unique_labels or len([l for l in labels if l == 'Typing']) < 50:
+            for _ in range(100):
                 # Generate clicking sounds resembling typing
                 typing_sound = np.zeros(int(DURATION * SAMPLE_RATE))
                 # Add random clicks
@@ -240,22 +233,26 @@ class NoiseAnalyzer:
                 labels.append('Typing')
         
         # Add synthetic phone ringing if not enough
-        if 'Phone_ringing' not in unique_labels:
-            for _ in range(60):
+        if 'Phone_ringing' not in unique_labels or len([l for l in labels if l == 'Phone_ringing']) < 50:
+            for _ in range(80):
                 # Generate ringing sounds
                 t = np.linspace(0, DURATION, int(DURATION * SAMPLE_RATE))
                 ring = 0.3 * np.sin(2 * np.pi * 800 * t) * (np.sin(2 * np.pi * 3 * t) > 0)
+                # Add some harmonics
+                ring += 0.1 * np.sin(2 * np.pi * 1600 * t) * (np.sin(2 * np.pi * 3 * t) > 0)
                 feature = self.extract_features(ring)
                 features.append(feature)
                 labels.append('Phone_ringing')
         
         # Add synthetic loud talking if not enough
         if 'Loud_talking' not in unique_labels or len([l for l in labels if l == 'Loud_talking']) < 50:
-            for _ in range(120):
+            for _ in range(150):
                 # Generate loud speech-like sounds
                 t = np.linspace(0, DURATION, int(DURATION * SAMPLE_RATE))
                 loud_talk = np.random.normal(0, 0.1, len(t)) * np.sin(2 * np.pi * 150 * t + np.random.random() * 2 * np.pi)
                 loud_talk += np.random.normal(0, 0.05, len(t)) * np.sin(2 * np.pi * 300 * t + np.random.random() * 2 * np.pi)
+                # Add some burst-like characteristics
+                loud_talk *= np.random.exponential(1, len(t))
                 feature = self.extract_features(loud_talk)
                 features.append(feature)
                 labels.append('Loud_talking')
@@ -272,7 +269,7 @@ class NoiseAnalyzer:
         for label, count in zip(unique_labels_final, counts):
             print(f"  {label}: {count} samples")
         
-        # Ensure we have all 5 target classes
+        # Ensure we have all 4 target classes
         missing_classes = set(TARGET_CLASSES) - set(unique_labels_final)
         if missing_classes:
             raise ValueError(f"Missing target classes: {missing_classes}")
