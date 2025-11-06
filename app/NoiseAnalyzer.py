@@ -338,7 +338,7 @@ class NoiseAnalyzer:
         self.label_encoder.fit(TARGET_CLASSES)
         
         # Try to load saved normalization parameters
-        params_path = 'model_params.npz'
+        params_path = 'models/model_params.npz'
         if os.path.exists(params_path):
             params = np.load(params_path)
             self.scaler_mean = params['scaler_mean']

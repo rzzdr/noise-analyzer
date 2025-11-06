@@ -212,11 +212,10 @@ poetry export -f requirements.txt --output requirements.txt
 
 ### Project Structure
 ```
-noise-analyzer/
+app/
 ├── main.py                    # Main application entry point
 ├── pyproject.toml            # Poetry configuration & dependencies
 ├── README.md                 # Project documentation
-├── model_params.npz          # Saved normalization parameters
 ├── real_time_predictions.csv # Real-time prediction logs
 ├── ESC-50-master/           # ESC-50 dataset (user provided)
 │   ├── audio/               # Audio files
@@ -225,6 +224,7 @@ noise-analyzer/
 │   ├── train/
 │   └── validation/
 └── models/                  # Saved model files
+    ├── model_params.npz          # Saved normalization parameters
     ├── best_model.h5
     └── noise_classifier_model.h5
 ```

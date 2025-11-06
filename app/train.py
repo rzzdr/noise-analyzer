@@ -123,11 +123,11 @@ def train_model(analyzer, features, labels, labels_raw):
     print("Model saved as 'models/noise_classifier_model.h5'")
     
     # Save normalization parameters
-    np.savez('model_params.npz', 
+    np.savez('models/model_params.npz', 
             scaler_mean=analyzer.scaler_mean, 
             scaler_std=analyzer.scaler_std)
-    print("Normalization parameters saved as 'model_params.npz'")
-    
+    print("Normalization parameters saved as 'models/model_params.npz'")
+
     return history
 
 def main():
