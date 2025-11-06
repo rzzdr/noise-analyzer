@@ -1,6 +1,6 @@
 import os
-from NoiseAnalyzer import NoiseAnalyzer
-from RealTimeClassifier import RealTimeClassifier
+from app.NoiseAnalyzer import NoiseAnalyzer
+from app.RealTimeClassifier import RealTimeClassifier
 
 def main():
     print("Voice Activity Detection + 4-Class Audio Classification System")
@@ -19,7 +19,7 @@ def main():
         if not os.path.exists(analyzer.dataset_path):
             print(f"ESC-50 dataset not found at {analyzer.dataset_path}")
             print("Please download ESC-50 dataset from: https://github.com/karolpiczak/ESC-50")
-            print("Extract it to the current directory as 'ESC-50-master'")
+            print("Extract it to the current directory as '../data/ESC-50-master'")
             return
         
         try:

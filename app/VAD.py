@@ -1,6 +1,5 @@
 import numpy as np
 import librosa
-import time
 from collections import deque
 
 class VoiceActivityDetector:

@@ -169,7 +169,7 @@ The system provides:
 
 ### ESC-50 Dataset Setup
 1. Download ESC-50 dataset from https://github.com/karolpiczak/ESC-50
-2. Extract to project directory as `ESC-50-master/`
+2. Extract to project directory as `data/ESC-50-master/`
 3. Verify structure: `ESC-50-master/audio/` and `ESC-50-master/meta/esc50.csv` should exist
 
 ## Troubleshooting
