@@ -14,35 +14,30 @@
 
 #include <stdint.h>
 
-// Feature dimensions
-#define N_MEL_BANDS 1
-#define N_TIME_FRAMES 100
+// Include config for consistent parameters
+#ifndef CONFIG_H
+#include "config.h"
+#endif
 
-// Feature normalization parameters
-const float FEATURE_MEAN[N_MEL_BANDS] = {
+// Use dimensions from config.h
+#define N_TIME_FRAMES N_FRAMES
 
-    -39.19651086f
-};
-
-const float FEATURE_STD[N_MEL_BANDS] = {
-
-    18.33127076f
-};
+// Feature normalization parameters (simplified - use global mean/std)
+const float GLOBAL_FEATURE_MEAN = -39.19651086f;
+const float GLOBAL_FEATURE_STD = 18.33127076f;
 
 // Helper function for feature normalization
 inline void normalize_features(float* features, int n_features) {
     for (int i = 0; i < n_features; i++) {
-        features[i] = (features[i] - FEATURE_MEAN[i % N_MEL_BANDS]) / FEATURE_STD[i % N_MEL_BANDS];
+        features[i] = (features[i] - GLOBAL_FEATURE_MEAN) / GLOBAL_FEATURE_STD;
     }
 }
 
 // Batch normalization for full spectrogram
 inline void normalize_spectrogram(float* spectrogram) {
-    for (int frame = 0; frame < N_TIME_FRAMES; frame++) {
-        for (int band = 0; band < N_MEL_BANDS; band++) {
-            int idx = frame * N_MEL_BANDS + band;
-            spectrogram[idx] = (spectrogram[idx] - FEATURE_MEAN[band]) / FEATURE_STD[band];
-        }
+    int total_features = N_TIME_FRAMES * N_MEL_BANDS;
+    for (int i = 0; i < total_features; i++) {
+        spectrogram[i] = (spectrogram[i] - GLOBAL_FEATURE_MEAN) / GLOBAL_FEATURE_STD;
     }
 }
 
