@@ -5,7 +5,7 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report, f1_score
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
-from app.NoiseAnalyzer import NoiseAnalyzer, TARGET_CLASSES
+from NoiseAnalyzer import NoiseAnalyzer, TARGET_CLASSES
 
 # Training parameters
 BATCH_SIZE = 10240

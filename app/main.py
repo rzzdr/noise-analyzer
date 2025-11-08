@@ -1,6 +1,6 @@
 import os
-from app.NoiseAnalyzer import NoiseAnalyzer
-from app.RealTimeClassifier import RealTimeClassifier
+from NoiseAnalyzer import NoiseAnalyzer
+from RealTimeClassifier import RealTimeClassifier
 
 def main():
     print("Voice Activity Detection + 4-Class Audio Classification System")

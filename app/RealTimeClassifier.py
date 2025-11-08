@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 import sounddevice as sd
-from app.NoiseAnalyzer import TARGET_CLASSES, SAMPLE_RATE, DURATION, HOP_LENGTH
-from app.VAD import VoiceActivityDetector
+from NoiseAnalyzer import TARGET_CLASSES, SAMPLE_RATE, DURATION, HOP_LENGTH
+from VAD import VoiceActivityDetector
 import time
 import librosa
 
