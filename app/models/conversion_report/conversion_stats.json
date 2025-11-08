@@ -1,0 +1,10 @@
+{
+  "original_size_kb": 289.4140625,
+  "quantized_size_kb": 76.0078125,
+  "compression_ratio": 3.807688354404358,
+  "original_accuracy": 0.93,
+  "quantized_accuracy": 0.935,
+  "accuracy_drop": -0.0050000000000000044,
+  "conversion_time": 2.721970558166504,
+  "timestamp": "2025-11-08T15:40:15.512029"
+}
