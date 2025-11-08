@@ -4,7 +4,7 @@ import pandas as pd
 import librosa
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, GRU, Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Dense, Dropout, BatchNormalization, GlobalAveragePooling1D
 from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import LabelEncoder
 import warnings
@@ -290,35 +290,38 @@ class NoiseAnalyzer:
         return features_normalized, labels_onehot, labels
     
     def create_model(self):
-        """Create the CNN-RNN model architecture"""
+        """Create the CNN model architecture with dilated convolutions"""
         model = Sequential([
             # First Conv1D block
             Conv1D(16, kernel_size=3, activation='relu', input_shape=(N_FRAMES, N_MELS)),
             BatchNormalization(),
             MaxPooling1D(2),
             Dropout(0.2),
-            
+
             # Second Conv1D block
             Conv1D(32, kernel_size=3, activation='relu'),
             BatchNormalization(),
             MaxPooling1D(2),
             Dropout(0.2),
-            
+
             # Third Conv1D block
             Conv1D(64, kernel_size=3, activation='relu'),
             BatchNormalization(),
             MaxPooling1D(2),
             Dropout(0.2),
-            
-            # RNN layer
-            GRU(32, return_sequences=False),
+
+            # 🔁 GRU replacement — Dilated Temporal Convolution Block
+            Conv1D(64, kernel_size=3, activation='relu', padding='same', dilation_rate=1),
+            Conv1D(64, kernel_size=3, activation='relu', padding='same', dilation_rate=2),
+            Conv1D(64, kernel_size=3, activation='relu', padding='same', dilation_rate=4),
+            GlobalAveragePooling1D(),
             Dropout(0.25),
-            
+
             # Dense layers
             Dense(64, activation='relu'),
             BatchNormalization(),
             Dropout(0.25),
-            
+
             Dense(len(TARGET_CLASSES), activation='softmax')
         ])
         
