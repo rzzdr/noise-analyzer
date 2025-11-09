@@ -9,9 +9,9 @@
 // ───────────────────────────────────────────────────────────
 //  WIFI CONFIGURATION
 // ───────────────────────────────────────────────────────────
-#define WIFI_SSID "Rudr's Room"     // ⚠️ CHANGE THIS
-#define WIFI_PASSWORD "741085246-+" // ⚠️ CHANGE THIS
-#define WIFI_TIMEOUT_MS 20000       // 20 second timeout
+#define WIFI_SSID "noise"        // ⚠️ CHANGE THIS
+#define WIFI_PASSWORD "12345678" // ⚠️ CHANGE THIS
+#define WIFI_TIMEOUT_MS 20000    // 20 second timeout
 
 // Server configuration for data transmission
 #define SERVER_URL "http://4.240.35.54:6002/predict"      // Flask prediction endpoint
@@ -65,27 +65,26 @@
 #define USE_PSRAM true // Use external PSRAM for buffers
 
 // ═══════════════════════════════════════════════════════════
-//  LEGACY PARAMETERS (for old header files compatibility)
-//  These are NOT used in the streaming architecture but
-//  needed for compilation of existing header files
+//  LEGACY PARAMETERS (for compatibility with old header files)
+//  Note: These are NOT used in the streaming architecture
 // ═══════════════════════════════════════════════════════════
 
 // ───────────────────────────────────────────────────────────
-//  FEATURE EXTRACTION PARAMETERS (Legacy - not used)
+//  FEATURE EXTRACTION PARAMETERS (Legacy)
 // ───────────────────────────────────────────────────────────
 #define FRAME_LENGTH 512 // ~32 ms @ 16 kHz
 #define HOP_LENGTH 160   // 10 ms hop
 #define N_FFT 512        // FFT size
 #define N_MEL_BANDS 40   // Mel filter banks
-#define N_FRAMES 96      // Time frames in spectrogram (~1s @ 10ms hop)
+#define N_FRAMES 96      // Time frames in spectrogram
 
 // ───────────────────────────────────────────────────────────
-//  MODEL PARAMETERS (Legacy - not used)
+//  MODEL PARAMETERS (Legacy)
 // ───────────────────────────────────────────────────────────
 #define NUM_CLASSES 4                  // Number of noise classes
-#define TFLITE_ARENA_SIZE (320 * 1024) // TFLite memory arena (not used in streaming mode)
+#define TFLITE_ARENA_SIZE (320 * 1024) // TFLite memory arena
 
-// Class names (legacy - not used in streaming mode)
+// Class names (legacy)
 static const char *CLASS_NAMES[NUM_CLASSES] = {
     "Whispering",
     "Typing",
@@ -93,18 +92,18 @@ static const char *CLASS_NAMES[NUM_CLASSES] = {
     "Loud_talking"};
 
 // ───────────────────────────────────────────────────────────
-//  VAD PARAMETERS (Legacy - not used)
+//  VAD PARAMETERS (Legacy)
 // ───────────────────────────────────────────────────────────
-#define VAD_CALIBRATION_SECONDS 3.0 // Calibration duration (legacy)
-#define VAD_ENERGY_MARGIN 1.5f      // Energy threshold margin
-#define VAD_SPECTRAL_MARGIN 1.8f    // Spectral flux threshold margin
-#define VAD_ZCR_MARGIN 1.2f         // Zero-crossing rate margin
+#define VAD_CALIBRATION_SECONDS 3.0f // Calibration duration
+#define VAD_ENERGY_MARGIN 1.5f       // Energy threshold margin
+#define VAD_SPECTRAL_MARGIN 1.8f     // Spectral flux threshold margin
+#define VAD_ZCR_MARGIN 1.2f          // Zero-crossing rate margin
 
 // ───────────────────────────────────────────────────────────
-//  NETWORK PARAMETERS (Legacy - not used)
+//  NETWORK PARAMETERS (Legacy)
 // ───────────────────────────────────────────────────────────
-#define SERVER_IP "4.240.35.54"                        // Legacy server IP
-#define SERVER_PORT 6002                               // Legacy server port
-#define HTTP_ENDPOINT "http://4.240.35.54:6002/ingest" // Legacy endpoint
+#define SERVER_IP "4.240.35.54"                 // Legacy server IP
+#define SERVER_PORT 6002                        // Legacy server port
+#define HTTP_ENDPOINT "http://4.240.35.54:6002" // Legacy endpoint
 
 #endif // CONFIG_H

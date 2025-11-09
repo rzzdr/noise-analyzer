@@ -231,15 +231,15 @@ bool sendAudioToServer(float *audioData, int length)
     return false;
   }
 
-  // Convert float array to bytes
-  uint8_t *audioBytes = (uint8_t *)audioData;
-  int byteLength = length * sizeof(float);
+  // Convert float array to bytes for base64 encoding
+  size_t byteLength = length * sizeof(float);
 
   // Base64 encode the audio data
-  String base64Audio = base64::encode(audioBytes, byteLength);
+  String base64Audio = base64::encode((uint8_t *)audioData, byteLength);
 
-  // Create JSON payload
-  StaticJsonDocument<200> doc;
+  // Create JSON payload - need large buffer for base64 encoded audio
+  // 16000 floats = 64000 bytes → ~85KB base64 → need DynamicJsonDocument
+  DynamicJsonDocument doc(200000); // ~90KB to hold base64 audio + metadata
   doc["audio"] = base64Audio;
   doc["sample_rate"] = SAMPLE_RATE;
   doc["device_id"] = DEVICE_ID;
@@ -250,6 +250,7 @@ bool sendAudioToServer(float *audioData, int length)
   // Send HTTP POST request
   http.begin(wifiClient, SERVER_URL);
   http.addHeader("Content-Type", "application/json");
+  http.setTimeout(15000); // Increase timeout for large payload
 
   int httpResponseCode = http.POST(jsonPayload);
 
@@ -446,15 +447,14 @@ bool sendCalibrationSample(float *audioData, int length)
     return false;
   }
 
-  // Convert float array to bytes
-  uint8_t *audioBytes = (uint8_t *)audioData;
-  int byteLength = length * sizeof(float);
+  // Convert float array to bytes for base64 encoding
+  size_t byteLength = length * sizeof(float);
 
   // Base64 encode the audio data
-  String base64Audio = base64::encode(audioBytes, byteLength);
+  String base64Audio = base64::encode((uint8_t *)audioData, byteLength);
 
-  // Create JSON payload
-  StaticJsonDocument<200> doc;
+  // Create JSON payload - need large buffer for base64 encoded audio
+  DynamicJsonDocument doc(90000); // ~90KB to hold base64 audio + metadata
   doc["audio"] = base64Audio;
   doc["sample_rate"] = SAMPLE_RATE;
   doc["device_id"] = DEVICE_ID;
@@ -465,6 +465,7 @@ bool sendCalibrationSample(float *audioData, int length)
   // Send HTTP POST request to calibration endpoint
   http.begin(wifiClient, CALIBRATE_URL);
   http.addHeader("Content-Type", "application/json");
+  http.setTimeout(15000); // Increase timeout for large payload
 
   int httpResponseCode = http.POST(jsonPayload);
 
