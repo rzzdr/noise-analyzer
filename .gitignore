@@ -3,3 +3,9 @@ real_time_predictions.csv
 *__pycache__/
 .vscode/
 *.pyc
+
+# Firebase credentials - DO NOT COMMIT
+firebase-credentials.json
+
+# Server logs
+*.log
