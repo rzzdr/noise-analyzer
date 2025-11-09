@@ -1,3 +1,5 @@
+#include <TensorFlowLite_ESP32.h>
+
 #ifndef MODEL_INFERENCE_H
 #define MODEL_INFERENCE_H
 

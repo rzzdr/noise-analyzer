@@ -238,7 +238,7 @@ def predict():
             "device_id": device_id,
             "predicted_class": predicted_class,
             "confidence": float(confidence),
-            "vad_activity": is_activity,
+            "vad_activity": bool(is_activity),
             "vad_confidence": float(vad_confidence),
             "probabilities": {
                 extended_classes[i]: float(extended_probs[i])
@@ -250,7 +250,11 @@ def predict():
         # Add VAD debug info if available
         if isinstance(vad_debug, dict):
             result["vad_debug"] = {
-                k: float(v) if isinstance(v, (int, float, np.number)) else v
+                k: (
+                    float(v)
+                    if isinstance(v, (int, float, np.number))
+                    else bool(v) if isinstance(v, (bool, np.bool_)) else v
+                )
                 for k, v in vad_debug.items()
             }
 
@@ -264,7 +268,7 @@ def predict():
                         "device_id": device_id,
                         "predicted_class": predicted_class,
                         "confidence": float(confidence),
-                        "vad_activity": is_activity,
+                        "vad_activity": bool(is_activity),
                         "vad_confidence": float(vad_confidence),
                         "probabilities": result["probabilities"],
                         "audio_stats": result["audio_stats"],

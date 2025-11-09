@@ -1,8 +1,9 @@
+#include <arduinoFFT.h>
+
 #ifndef FEATURE_EXTRACTOR_H
 #define FEATURE_EXTRACTOR_H
 
 #include <Arduino.h>
-#include <ArduinoFFT.h>
 #include "config.h"
 #include "model_normalization.h"
 

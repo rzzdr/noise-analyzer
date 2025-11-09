@@ -2,93 +2,109 @@
 #define CONFIG_H
 
 // ═══════════════════════════════════════════════════════════
-//  ESP32-CAM STANDALONE NOISE MONITOR CONFIGURATION
+//  ESP32 AUDIO STREAMER CONFIGURATION
+//  Sends raw audio data to Flask server for processing
 // ═══════════════════════════════════════════════════════════
 
 // ───────────────────────────────────────────────────────────
 //  WIFI CONFIGURATION
 // ───────────────────────────────────────────────────────────
-#define WIFI_SSID       "Rudr's Room"       // ⚠️ CHANGE THIS
-#define WIFI_PASSWORD   "741085246-+"   // ⚠️ CHANGE THIS
-#define WIFI_TIMEOUT_MS 20000                // 20 second timeout
+#define WIFI_SSID "Rudr's Room"     // ⚠️ CHANGE THIS
+#define WIFI_PASSWORD "741085246-+" // ⚠️ CHANGE THIS
+#define WIFI_TIMEOUT_MS 20000       // 20 second timeout
 
 // Server configuration for data transmission
-#define SERVER_IP       "192.168.1.100"      // ⚠️ Your laptop IP
-#define SERVER_PORT     8888                 // UDP port
-
-// Alternative: Use HTTP POST instead of UDP
-#define USE_HTTP_POST   true                // Set true for HTTP
-#define HTTP_ENDPOINT   "https://noise2.futurixai.com/data"
+#define SERVER_URL "http://4.240.35.54:6002/predict"      // Flask prediction endpoint
+#define CALIBRATE_URL "http://4.240.35.54:6002/calibrate" // Flask calibration endpoint
 
 // ───────────────────────────────────────────────────────────
 //  DEVICE IDENTIFICATION
 // ───────────────────────────────────────────────────────────
-#define DEVICE_ID       "ESP32_Node_01"      // Unique ID per device
-#define DEVICE_LOCATION "Library_Floor1_NE"  // Physical location
+#define DEVICE_ID "ESP32_Node_01"           // Unique ID per device
+#define DEVICE_LOCATION "Library_Floor1_NE" // Physical location
 
 // ───────────────────────────────────────────────────────────
-//  I²S MICROPHONE PINS (INMP441)
+//  HW-484 ANALOG MICROPHONE CONFIGURATION
 // ───────────────────────────────────────────────────────────
-#define I2S_WS_PIN      15    // Word Select (LRCLK) → GPIO15
-#define I2S_SCK_PIN     14    // Serial Clock (BCLK) → GPIO14
-#define I2S_SD_PIN      13    // Serial Data (DOUT)  → GPIO13
-#define I2S_PORT        I2S_NUM_0
+#define MIC_ANALOG_PIN 36 // A0 pin → GPIO36 (ADC1_CH0, VP)
+                          // Wiring: A0→GPIO36, G→GND, +→3.3V
+#define ADC_RESOLUTION 12 // 12-bit ADC (0-4095)
+#define ADC_VREF 3.3      // Reference voltage
 
 // ───────────────────────────────────────────────────────────
 //  AUDIO PARAMETERS
 // ───────────────────────────────────────────────────────────
-#define SAMPLE_RATE     16000      // 16 kHz sampling
-#define AUDIO_BUFFER_SIZE 16000    // 1 second of audio
-#define FRAME_LENGTH    400        // 25ms @ 16kHz
-#define HOP_LENGTH      160        // 10ms @ 16kHz
-#define N_FFT           512        // FFT size
-#define N_MEL_BANDS     32         // Mel filter banks (reduced from 40)
-#define N_FRAMES        80         // Time frames in spectrogram (reduced from 100)
+#define SAMPLE_RATE 16000       // 16 kHz sampling (to match Flask server)
+#define AUDIO_BUFFER_SIZE 16000 // 1 second of audio
+#define SAMPLING_PERIOD_US 62.5 // 1000000/16000 = 62.5 microseconds
 
 // ───────────────────────────────────────────────────────────
-//  MODEL PARAMETERS
+//  CALIBRATION SETTINGS
 // ───────────────────────────────────────────────────────────
-#define NUM_CLASSES     4          // Whispering, Typing, Phone, Loud_talking
-#define TFLITE_ARENA_SIZE (60 * 1024)   // 60KB for TFLite (reduced)
-
-// ───────────────────────────────────────────────────────────
-//  VAD PARAMETERS
-// ───────────────────────────────────────────────────────────
-#define VAD_CALIBRATION_SECONDS 2.5  // Reduced from 3.5 to save memory
-#define VAD_ENERGY_MARGIN       1.3
-#define VAD_SPECTRAL_MARGIN     1.2
-#define VAD_ZCR_MARGIN          1.3
+#define CALIBRATION_SAMPLES 4 // Number of 1-second samples for VAD calibration (3.5s total)
 
 // ───────────────────────────────────────────────────────────
 //  TRANSMISSION SETTINGS
 // ───────────────────────────────────────────────────────────
-#define SEND_INTERVAL_MS    1000   // Send every prediction
-#define BATCH_SIZE          1      // Send individual predictions
-#define ENABLE_LED_FEEDBACK true   // Blink LED on activity
+#define SEND_INTERVAL_MS 1000    // Send every 1 second
+#define ENABLE_LED_FEEDBACK true // Blink LED on transmission
 
 // LED Pin (ESP32-CAM has built-in LED on GPIO4)
-#define LED_PIN             4      // Flash LED
-#define LED_BLINK_MS        100    // Blink duration
+#define LED_PIN 4       // Flash LED
+#define LED_BLINK_MS 50 // Blink duration
 
 // ───────────────────────────────────────────────────────────
 //  DEBUG SETTINGS
 // ───────────────────────────────────────────────────────────
-#define ENABLE_SERIAL_DEBUG false  // Set false for production
-#define SERIAL_BAUD         115200
+#define ENABLE_SERIAL_DEBUG true // Enable debug output
+#define SERIAL_BAUD 115200
 
 // ───────────────────────────────────────────────────────────
 //  MEMORY ALLOCATION
 // ───────────────────────────────────────────────────────────
-#define USE_PSRAM       true       // Use external PSRAM for buffers
+#define USE_PSRAM true // Use external PSRAM for buffers
+
+// ═══════════════════════════════════════════════════════════
+//  LEGACY PARAMETERS (for old header files compatibility)
+//  These are NOT used in the streaming architecture but
+//  needed for compilation of existing header files
+// ═══════════════════════════════════════════════════════════
 
 // ───────────────────────────────────────────────────────────
-//  CLASS NAMES
+//  FEATURE EXTRACTION PARAMETERS (Legacy - not used)
 // ───────────────────────────────────────────────────────────
-const char* const CLASS_NAMES[NUM_CLASSES] = {
-  "Whispering",
-  "Typing",
-  "Phone_ringing",
-  "Loud_talking"
-};
+#define FRAME_LENGTH 512 // ~32 ms @ 16 kHz
+#define HOP_LENGTH 160   // 10 ms hop
+#define N_FFT 512        // FFT size
+#define N_MEL_BANDS 40   // Mel filter banks
+#define N_FRAMES 96      // Time frames in spectrogram (~1s @ 10ms hop)
+
+// ───────────────────────────────────────────────────────────
+//  MODEL PARAMETERS (Legacy - not used)
+// ───────────────────────────────────────────────────────────
+#define NUM_CLASSES 4                  // Number of noise classes
+#define TFLITE_ARENA_SIZE (320 * 1024) // TFLite memory arena (not used in streaming mode)
+
+// Class names (legacy - not used in streaming mode)
+static const char *CLASS_NAMES[NUM_CLASSES] = {
+    "Whispering",
+    "Typing",
+    "Phone_ringing",
+    "Loud_talking"};
+
+// ───────────────────────────────────────────────────────────
+//  VAD PARAMETERS (Legacy - not used)
+// ───────────────────────────────────────────────────────────
+#define VAD_CALIBRATION_SECONDS 3.0 // Calibration duration (legacy)
+#define VAD_ENERGY_MARGIN 1.5f      // Energy threshold margin
+#define VAD_SPECTRAL_MARGIN 1.8f    // Spectral flux threshold margin
+#define VAD_ZCR_MARGIN 1.2f         // Zero-crossing rate margin
+
+// ───────────────────────────────────────────────────────────
+//  NETWORK PARAMETERS (Legacy - not used)
+// ───────────────────────────────────────────────────────────
+#define SERVER_IP "4.240.35.54"                        // Legacy server IP
+#define SERVER_PORT 6002                               // Legacy server port
+#define HTTP_ENDPOINT "http://4.240.35.54:6002/ingest" // Legacy endpoint
 
 #endif // CONFIG_H

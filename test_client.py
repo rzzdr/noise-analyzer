@@ -13,7 +13,7 @@ from datetime import datetime
 import sys
 
 # Configuration
-SERVER_URL = "http://localhost:5000"  # Change to your server IP if not local
+SERVER_URL = "http://4.240.35.54:6002"  # Change to your server IP if not local
 SAMPLE_RATE = 16000
 DURATION = 1.0  # 1 second audio chunks
 DEVICE_ID = "test_laptop"  # Unique identifier for this client

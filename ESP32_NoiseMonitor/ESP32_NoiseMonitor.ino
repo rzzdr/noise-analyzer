@@ -1,372 +1,521 @@
-#include <arduinoFFT.h>
-
-#include <TensorFlowLite_ESP32.h>
-
 /*
- * ESP32-CAM Standalone Library Noise Monitor (WiFi Version)
- * Two-stage audio classification: VAD → 4-class classifier
- * 
- * Hardware: ESP32-CAM + INMP441 I²S Microphone + ESP32-CAM-MB
- * Communication: WiFi (UDP/HTTP) to laptop server
- * 
- * Author: Generated for Library Noise Monitoring
+ * ESP32 Audio Streamer for HW-484 Analog Microphone
+ * Captures audio from analog microphone and streams to Flask server
+ *
+ * Hardware: ESP32 + HW-484 Analog Microphone Module
+ * Wiring:
+ *   - A0 (Analog Out) → GPIO36 (VP/ADC1_CH0)
+ *   - G  (Ground)     → GND
+ *   - +  (VCC)        → 3.3V
+ *   - D0 (Digital)    → Not connected
+ *
+ * Communication: WiFi (HTTP POST) to Flask server
+ *
+ * Author: Audio Monitoring System
  * Date: 2025
  */
 
-#include <driver/i2s.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <base64.h>
 #include "config.h"
-#include "wifi_manager.h"
-#include "vad.h"
-#include "feature_extractor.h"
-#include "model_inference.h"
 
 // Global objects
-WiFiManager wifiManager;
-VoiceActivityDetector vad;
-FeatureExtractor featureExtractor;
-ModelInference modelInference;
+HTTPClient http;
+WiFiClient wifiClient;
 
 // Audio buffers - will be allocated in setup() to use PSRAM
-int16_t* audioBuffer = nullptr;
-float* audioFloat = nullptr;
+uint16_t *adcBuffer = nullptr; // Raw ADC readings
+float *audioFloat = nullptr;   // Normalized float audio [-1, 1]
 
 // Statistics
-unsigned long totalInferences = 0;
-unsigned long vadDetections = 0;
-unsigned long classifierInferences = 0;
+unsigned long totalTransmissions = 0;
+unsigned long successfulTransmissions = 0;
 unsigned long transmissionErrors = 0;
 
-// LED feedback
-unsigned long lastLEDBlink = 0;
+// Timing
+hw_timer_t *samplingTimer = NULL;
+volatile bool bufferReady = false;
+volatile uint16_t bufferIndex = 0;
 
-void setup() {
-  #if ENABLE_SERIAL_DEBUG
+void setup()
+{
+#if ENABLE_SERIAL_DEBUG
   Serial.begin(SERIAL_BAUD);
   delay(1000);
-  #endif
-  
+#endif
+
   // Allocate audio buffers in PSRAM if available
-  if (psramFound()) {
-    audioBuffer = (int16_t*)ps_malloc(AUDIO_BUFFER_SIZE * sizeof(int16_t));
-    audioFloat = (float*)ps_malloc(AUDIO_BUFFER_SIZE * sizeof(float));
+  if (psramFound())
+  {
+    adcBuffer = (uint16_t *)ps_malloc(AUDIO_BUFFER_SIZE * sizeof(uint16_t));
+    audioFloat = (float *)ps_malloc(AUDIO_BUFFER_SIZE * sizeof(float));
+#if ENABLE_SERIAL_DEBUG
     Serial.println("✓ Audio buffers allocated in PSRAM");
-  } else {
-    audioBuffer = (int16_t*)malloc(AUDIO_BUFFER_SIZE * sizeof(int16_t));
-    audioFloat = (float*)malloc(AUDIO_BUFFER_SIZE * sizeof(float));
-    Serial.println("✓ Audio buffers allocated in heap");
+#endif
   }
-  
-  if (!audioBuffer || !audioFloat) {
+  else
+  {
+    adcBuffer = (uint16_t *)malloc(AUDIO_BUFFER_SIZE * sizeof(uint16_t));
+    audioFloat = (float *)malloc(AUDIO_BUFFER_SIZE * sizeof(float));
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("✓ Audio buffers allocated in heap");
+#endif
+  }
+
+  if (!adcBuffer || !audioFloat)
+  {
+#if ENABLE_SERIAL_DEBUG
     Serial.println("❌ Failed to allocate audio buffers! Halting.");
-    while (1) {
+#endif
+    while (1)
+    {
       delay(1000);
     }
   }
-  
+
   // Initialize LED
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-  
-  #if ENABLE_SERIAL_DEBUG
+
+#if ENABLE_SERIAL_DEBUG
   Serial.println("\n╔═══════════════════════════════════════╗");
-  Serial.println("║  ESP32-CAM Noise Monitor (WiFi)      ║");
-  Serial.println("║  Standalone System with VAD          ║");
+  Serial.println("║  ESP32 Audio Streamer (HW-484)       ║");
+  Serial.println("║  Analog Microphone → Flask Server    ║");
   Serial.println("╚═══════════════════════════════════════╝\n");
   Serial.printf("Device ID: %s\n", DEVICE_ID);
-  Serial.printf("Location: %s\n\n", DEVICE_LOCATION);
-  #endif
-  
+  Serial.printf("Location: %s\n", DEVICE_LOCATION);
+  Serial.printf("Server: %s\n\n", SERVER_URL);
+#endif
+
   // Connect to WiFi
-  blinkLED(5, 200);  // Startup blink pattern
-  if (!wifiManager.begin()) {
-    #if ENABLE_SERIAL_DEBUG
-    Serial.println("⚠️  Starting in offline mode...");
-    #endif
-    blinkLED(10, 100);  // Error pattern
-  }
-  
-  // Initialize I2S microphone
-  if (!initI2S()) {
-    #if ENABLE_SERIAL_DEBUG
-    Serial.println("❌ I2S initialization failed! Halting.");
-    #endif
-    while (1) { 
+  blinkLED(5, 200); // Startup blink pattern
+  connectToWiFi();
+
+  // Initialize ADC for analog microphone
+  if (!initADC())
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("❌ ADC initialization failed! Halting.");
+#endif
+    while (1)
+    {
       blinkLED(3, 500);
       delay(2000);
     }
   }
-  
-  // Initialize VAD
-  #if ENABLE_SERIAL_DEBUG
-  Serial.println("🎙️  Initializing Voice Activity Detector...");
-  Serial.println("\n┌─────────────────────────────────────┐");
-  Serial.println("│  VAD CALIBRATION - Stay Silent!    │");
-  Serial.println("│  Collecting baseline noise (3.5s)  │");
+
+// Perform VAD calibration by sending silent samples to server
+#if ENABLE_SERIAL_DEBUG
+  Serial.println("\n🎙️  CALIBRATION PHASE");
+  Serial.println("┌─────────────────────────────────────┐");
+  Serial.println("│  Please remain SILENT for 4 sec    │");
+  Serial.println("│  Sending calibration samples...    │");
   Serial.println("└─────────────────────────────────────┘");
-  #endif
-  
-  vad.begin(SAMPLE_RATE);
-  
-  // VAD Calibration Phase
-  while (!vad.isCalibrated()) {
-    size_t bytesRead;
-    i2s_read(I2S_PORT, audioBuffer, sizeof(audioBuffer), &bytesRead, portMAX_DELAY);
-    
-    for (int i = 0; i < AUDIO_BUFFER_SIZE; i++) {
-      audioFloat[i] = audioBuffer[i] / 32768.0f;
-    }
-    
-    vad.addCalibrationSample(audioFloat, AUDIO_BUFFER_SIZE);
-    
-    #if ENABLE_SERIAL_DEBUG
-    int progress = vad.getCalibrationProgress();
-    if (progress % 25 == 0) {
-      Serial.printf("  Calibration: %d%%\n", progress);
-    }
-    #endif
+#endif
+
+  if (!performCalibration())
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("❌ Calibration failed! Continuing anyway...");
+#endif
+    blinkLED(5, 100);
   }
-  
-  #if ENABLE_SERIAL_DEBUG
-  Serial.println("✅ VAD calibrated successfully!\n");
-  #endif
-  
-  blinkLED(3, 100);  // Calibration complete
-  
-  // Initialize feature extractor
-  #if ENABLE_SERIAL_DEBUG
-  Serial.println("🔧 Initializing Feature Extractor...");
-  #endif
-  featureExtractor.begin();
-  
-  // Initialize TFLite model
-  #if ENABLE_SERIAL_DEBUG
-  Serial.println("🧠 Loading TensorFlow Lite Model...");
-  #endif
-  if (!modelInference.begin()) {
-    #if ENABLE_SERIAL_DEBUG
-    Serial.println("❌ Model initialization failed! Halting.");
-    #endif
-    while (1) {
-      blinkLED(3, 500);
-      delay(2000);
-    }
+  else
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("✅ Calibration completed successfully!");
+#endif
+    blinkLED(3, 100);
   }
-  
-  #if ENABLE_SERIAL_DEBUG
-  Serial.println("✅ All systems ready!");
+
+#if ENABLE_SERIAL_DEBUG
+  Serial.println("\n✅ All systems ready!");
   Serial.println("\n┌─────────────────────────────────────┐");
-  Serial.println("│    MONITORING STARTED (WiFi Mode)   │");
+  Serial.println("│    AUDIO STREAMING STARTED          │");
   Serial.println("└─────────────────────────────────────┘\n");
-  #endif
-  
-  blinkLED(5, 50);  // Ready signal
+#endif
+
   delay(500);
 }
 
-void loop() {
+void loop()
+{
   unsigned long loopStart = millis();
-  
+
   // Check WiFi connection
-  if (!wifiManager.isConnected()) {
-    wifiManager.reconnect();
+  if (WiFi.status() != WL_CONNECTED)
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("⚠️  WiFi disconnected, reconnecting...");
+#endif
+    connectToWiFi();
   }
-  
-  // Read 1 second of audio (16000 samples)
-  size_t bytesRead;
-  i2s_read(I2S_PORT, audioBuffer, sizeof(audioBuffer), &bytesRead, portMAX_DELAY);
-  
-  // Convert to float [-1, 1]
-  for (int i = 0; i < AUDIO_BUFFER_SIZE; i++) {
-    audioFloat[i] = audioBuffer[i] / 32768.0f;
-  }
-  
-  // STAGE 1: Voice Activity Detection
-  unsigned long vadStart = millis();
-  bool isActivity = vad.detectActivity(audioFloat, AUDIO_BUFFER_SIZE);
-  float vadConfidence = vad.getConfidence();
-  unsigned long vadTime = millis() - vadStart;
-  
-  totalInferences++;
-  
-  String predictedClass;
-  float classConfidence;
-  unsigned long inferenceTime = 0;
-  
-  if (isActivity) {
-    // STAGE 2: Noise Classification
-    vadDetections++;
-    
-    #if ENABLE_LED_FEEDBACK
-    digitalWrite(LED_PIN, HIGH);  // Turn on LED during activity
-    #endif
-    
-    // Extract features
-    unsigned long featureStart = millis();
-    float* features = featureExtractor.extractFeatures(audioFloat, AUDIO_BUFFER_SIZE);
-    unsigned long featureTime = millis() - featureStart;
-    
-    if (features != nullptr) {
-      // Run TFLite inference
-      unsigned long inferStart = millis();
-      int classIndex = modelInference.predict(features, &classConfidence);
-      inferenceTime = millis() - inferStart;
-      
-      predictedClass = modelInference.getClassName(classIndex);
-      classifierInferences++;
-      
-      #if ENABLE_SERIAL_DEBUG
-      if (classifierInferences % 10 == 0) {
-        Serial.printf("⏱️  Timing - VAD: %lums, Features: %lums, Inference: %lums\n", 
-                     vadTime, featureTime, inferenceTime);
-      }
-      #endif
-    } else {
-      predictedClass = "ERROR";
-      classConfidence = 0.0f;
+
+// Collect 1 second of audio samples
+#if ENABLE_SERIAL_DEBUG && (totalTransmissions % 10 == 0)
+  Serial.println("📊 Capturing audio...");
+#endif
+
+  unsigned long captureStart = micros();
+  for (int i = 0; i < AUDIO_BUFFER_SIZE; i++)
+  {
+    unsigned long sampleStart = micros();
+
+    // Read ADC value (0-4095 for 12-bit)
+    adcBuffer[i] = analogRead(MIC_ANALOG_PIN);
+
+    // Wait for next sample period
+    while (micros() - sampleStart < SAMPLING_PERIOD_US)
+    {
+      // Busy wait for precise timing
     }
-    
-    #if ENABLE_LED_FEEDBACK
-    digitalWrite(LED_PIN, LOW);
-    #endif
-  } else {
-    // No activity detected
-    predictedClass = "Silence";
-    classConfidence = vadConfidence;
-    inferenceTime = vadTime;
   }
-  
-  // Prepare JSON data packet
-  String jsonData = createDataPacket(
-    loopStart,
-    predictedClass,
-    classConfidence,
-    inferenceTime,
-    vadConfidence,
-    isActivity
-  );
-  
-  // Transmit data
-  bool transmitSuccess = false;
-  
-  #if USE_HTTP_POST
-  transmitSuccess = wifiManager.sendHTTP(jsonData.c_str());
-  #else
-  transmitSuccess = wifiManager.sendUDP(jsonData.c_str());
-  #endif
-  
-  if (!transmitSuccess) {
+  unsigned long captureTime = (micros() - captureStart) / 1000;
+
+  // Convert ADC values to normalized float [-1, 1]
+  // ADC range: 0-4095, center at ~2048
+  // Normalize: (value - 2048) / 2048.0
+  for (int i = 0; i < AUDIO_BUFFER_SIZE; i++)
+  {
+    audioFloat[i] = (adcBuffer[i] - 2048.0f) / 2048.0f;
+  }
+
+// Send to Flask server
+#if ENABLE_LED_FEEDBACK
+  digitalWrite(LED_PIN, HIGH);
+#endif
+
+  unsigned long transmitStart = millis();
+  bool success = sendAudioToServer(audioFloat, AUDIO_BUFFER_SIZE);
+  unsigned long transmitTime = millis() - transmitStart;
+
+#if ENABLE_LED_FEEDBACK
+  digitalWrite(LED_PIN, LOW);
+#endif
+
+  totalTransmissions++;
+  if (success)
+  {
+    successfulTransmissions++;
+  }
+  else
+  {
     transmissionErrors++;
   }
-  
-  // Periodic status report
-  #if ENABLE_SERIAL_DEBUG
-  if (totalInferences % 30 == 0) {
-    printStatusReport();
+
+// Periodic status report
+#if ENABLE_SERIAL_DEBUG
+  if (totalTransmissions % 10 == 0)
+  {
+    printStatusReport(captureTime, transmitTime);
   }
-  #endif
-  
+#endif
+
   // Maintain ~1 second loop time
   unsigned long loopTime = millis() - loopStart;
-  if (loopTime < 1000) {
-    delay(1000 - loopTime);
+  if (loopTime < SEND_INTERVAL_MS)
+  {
+    delay(SEND_INTERVAL_MS - loopTime);
   }
 }
 
-String createDataPacket(unsigned long timestamp, String className, 
-                       float confidence, unsigned long inferenceMs,
-                       float vadConf, bool activity) {
-  // JSON format for easy parsing
-  String json = "{";
-  json += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
-  json += "\"location\":\"" + String(DEVICE_LOCATION) + "\",";
-  json += "\"timestamp\":" + String(timestamp) + ",";
-  json += "\"class\":\"" + className + "\",";
-  json += "\"confidence\":" + String(confidence, 3) + ",";
-  json += "\"inference_ms\":" + String(inferenceMs) + ",";
-  json += "\"vad_confidence\":" + String(vadConf, 3) + ",";
-  json += "\"is_activity\":" + String(activity ? "true" : "false") + ",";
-  json += "\"rssi\":" + String(wifiManager.getRSSI());
-  json += "}";
-  
-  return json;
-}
-
-void printStatusReport() {
-  float vadRate = (vadDetections * 100.0f) / totalInferences;
-  float errorRate = (transmissionErrors * 100.0f) / totalInferences;
-  
-  // Serial.println("\n" + String("=") * 60);
-  Serial.println("📊 SYSTEM STATUS REPORT");
-  // Serial.println(String("=") * 60);
-  Serial.printf("Total Inferences:      %lu\n", totalInferences);
-  Serial.printf("Activity Detected:     %.1f%%\n", vadRate);
-  Serial.printf("Classifier Runs:       %lu\n", classifierInferences);
-  Serial.printf("Transmission Errors:   %.1f%%\n", errorRate);
-  Serial.printf("Free Heap:             %d KB\n", ESP.getFreeHeap() / 1024);
-  Serial.printf("Free PSRAM:            %d KB\n", ESP.getFreePsram() / 1024);
-  Serial.printf("WiFi RSSI:             %d dBm\n", wifiManager.getRSSI());
-  Serial.printf("Local IP:              %s\n", wifiManager.getLocalIP().c_str());
-  // Serial.println(String("=") * 60 + "\n");
-}
-
-bool initI2S() {
-  #if ENABLE_SERIAL_DEBUG
-  Serial.println("🎤 Initializing I2S Microphone...");
-  #endif
-  
-  i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 4,
-    .dma_buf_len = 256,
-    .use_apll = false,
-    .tx_desc_auto_clear = false,
-    .fixed_mclk = 0
-  };
-  
-  i2s_pin_config_t pin_config = {
-    .bck_io_num = I2S_SCK_PIN,
-    .ws_io_num = I2S_WS_PIN,
-    .data_out_num = I2S_PIN_NO_CHANGE,
-    .data_in_num = I2S_SD_PIN
-  };
-  
-  esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
-  if (err != ESP_OK) {
-    #if ENABLE_SERIAL_DEBUG
-    Serial.printf("❌ I2S driver install failed: %d\n", err);
-    #endif
+bool sendAudioToServer(float *audioData, int length)
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("❌ Cannot send: WiFi not connected");
+#endif
     return false;
   }
-  
-  err = i2s_set_pin(I2S_PORT, &pin_config);
-  if (err != ESP_OK) {
-    #if ENABLE_SERIAL_DEBUG
-    Serial.printf("❌ I2S pin config failed: %d\n", err);
-    #endif
-    return false;
+
+  // Convert float array to bytes
+  uint8_t *audioBytes = (uint8_t *)audioData;
+  int byteLength = length * sizeof(float);
+
+  // Base64 encode the audio data
+  String base64Audio = base64::encode(audioBytes, byteLength);
+
+  // Create JSON payload
+  StaticJsonDocument<200> doc;
+  doc["audio"] = base64Audio;
+  doc["sample_rate"] = SAMPLE_RATE;
+  doc["device_id"] = DEVICE_ID;
+
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+
+  // Send HTTP POST request
+  http.begin(wifiClient, SERVER_URL);
+  http.addHeader("Content-Type", "application/json");
+
+  int httpResponseCode = http.POST(jsonPayload);
+
+  bool success = false;
+  if (httpResponseCode > 0)
+  {
+#if ENABLE_SERIAL_DEBUG
+    String response = http.getString();
+    if (httpResponseCode == 200)
+    {
+      Serial.println("✅ Audio sent successfully");
+
+      // Parse response to show prediction
+      StaticJsonDocument<512> responseDoc;
+      DeserializationError error = deserializeJson(responseDoc, response);
+
+      if (!error)
+      {
+        const char *predictedClass = responseDoc["predicted_class"];
+        float confidence = responseDoc["confidence"];
+        Serial.printf("   → Prediction: %s (%.2f%%)\n",
+                      predictedClass, confidence * 100);
+      }
+      success = true;
+    }
+    else
+    {
+      Serial.printf("⚠️  HTTP Error: %d\n", httpResponseCode);
+      Serial.println("   Response: " + response);
+    }
+#else
+    success = (httpResponseCode == 200);
+#endif
   }
-  
-  #if ENABLE_SERIAL_DEBUG
-  Serial.println("✅ I2S initialized successfully");
-  Serial.printf("  Sample Rate: %d Hz\n", SAMPLE_RATE);
-  Serial.printf("  Pins - SCK:%d, WS:%d, SD:%d\n", I2S_SCK_PIN, I2S_WS_PIN, I2S_SD_PIN);
-  #endif
-  
+  else
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.printf("❌ HTTP Request failed: %s\n", http.errorToString(httpResponseCode).c_str());
+#endif
+  }
+
+  http.end();
+  return success;
+}
+
+void connectToWiFi()
+{
+#if ENABLE_SERIAL_DEBUG
+  Serial.println("🌐 Connecting to WiFi...");
+  Serial.printf("   SSID: %s\n", WIFI_SSID);
+#endif
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long startTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startTime < WIFI_TIMEOUT_MS)
+  {
+    delay(500);
+#if ENABLE_SERIAL_DEBUG
+    Serial.print(".");
+#endif
+  }
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("\n✅ WiFi connected!");
+    Serial.printf("   IP Address: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("   RSSI: %d dBm\n", WiFi.RSSI());
+#endif
+    blinkLED(3, 100);
+  }
+  else
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("\n❌ WiFi connection failed!");
+#endif
+    blinkLED(10, 100);
+  }
+}
+
+bool initADC()
+{
+#if ENABLE_SERIAL_DEBUG
+  Serial.println("🎤 Initializing ADC for HW-484 microphone...");
+#endif
+
+  // Configure ADC
+  analogReadResolution(ADC_RESOLUTION); // 12-bit resolution
+  analogSetAttenuation(ADC_11db);       // Full range 0-3.3V
+
+  // Set ADC pin mode
+  pinMode(MIC_ANALOG_PIN, INPUT);
+
+  // Test read
+  uint16_t testValue = analogRead(MIC_ANALOG_PIN);
+
+#if ENABLE_SERIAL_DEBUG
+  Serial.println("✅ ADC initialized successfully");
+  Serial.printf("   Pin: GPIO%d (ADC1_CH0)\n", MIC_ANALOG_PIN);
+  Serial.printf("   Resolution: %d-bit (0-%d)\n", ADC_RESOLUTION, (1 << ADC_RESOLUTION) - 1);
+  Serial.printf("   Sample Rate: %d Hz\n", SAMPLE_RATE);
+  Serial.printf("   Test Reading: %d\n", testValue);
+#endif
+
   return true;
 }
 
-void blinkLED(int times, int delayMs) {
-  #if ENABLE_LED_FEEDBACK
-  for (int i = 0; i < times; i++) {
+void printStatusReport(unsigned long captureMs, unsigned long transmitMs)
+{
+  float successRate = (successfulTransmissions * 100.0f) / totalTransmissions;
+  float errorRate = (transmissionErrors * 100.0f) / totalTransmissions;
+
+  Serial.println("\n📊 SYSTEM STATUS REPORT");
+  Serial.printf("Total Transmissions:   %lu\n", totalTransmissions);
+  Serial.printf("Successful:            %.1f%%\n", successRate);
+  Serial.printf("Errors:                %.1f%%\n", errorRate);
+  Serial.printf("Capture Time:          %lu ms\n", captureMs);
+  Serial.printf("Transmit Time:         %lu ms\n", transmitMs);
+  Serial.printf("Free Heap:             %d KB\n", ESP.getFreeHeap() / 1024);
+  if (psramFound())
+  {
+    Serial.printf("Free PSRAM:            %d KB\n", ESP.getFreePsram() / 1024);
+  }
+  Serial.printf("WiFi RSSI:             %d dBm\n", WiFi.RSSI());
+  Serial.printf("Local IP:              %s\n", WiFi.localIP().toString().c_str());
+  Serial.println();
+}
+
+bool performCalibration()
+{
+#if ENABLE_SERIAL_DEBUG
+  Serial.println("📊 Starting calibration...");
+#endif
+
+  bool allSuccess = true;
+
+  for (int sample = 0; sample < CALIBRATION_SAMPLES; sample++)
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.printf("   Collecting sample %d/%d...\n", sample + 1, CALIBRATION_SAMPLES);
+#endif
+
+    // Collect 1 second of audio
+    for (int i = 0; i < AUDIO_BUFFER_SIZE; i++)
+    {
+      unsigned long sampleStart = micros();
+      adcBuffer[i] = analogRead(MIC_ANALOG_PIN);
+
+      while (micros() - sampleStart < SAMPLING_PERIOD_US)
+      {
+        // Precise timing
+      }
+    }
+
+    // Convert to normalized float
+    for (int i = 0; i < AUDIO_BUFFER_SIZE; i++)
+    {
+      audioFloat[i] = (adcBuffer[i] - 2048.0f) / 2048.0f;
+    }
+
+    // Send calibration sample to server
+    bool success = sendCalibrationSample(audioFloat, AUDIO_BUFFER_SIZE);
+
+    if (!success)
+    {
+      allSuccess = false;
+#if ENABLE_SERIAL_DEBUG
+      Serial.printf("   ⚠️  Sample %d failed\n", sample + 1);
+#endif
+    }
+    else
+    {
+#if ENABLE_SERIAL_DEBUG
+      Serial.printf("   ✅ Sample %d sent\n", sample + 1);
+#endif
+    }
+
+    // Small delay between samples
+    delay(100);
+  }
+
+  return allSuccess;
+}
+
+bool sendCalibrationSample(float *audioData, int length)
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.println("❌ Cannot calibrate: WiFi not connected");
+#endif
+    return false;
+  }
+
+  // Convert float array to bytes
+  uint8_t *audioBytes = (uint8_t *)audioData;
+  int byteLength = length * sizeof(float);
+
+  // Base64 encode the audio data
+  String base64Audio = base64::encode(audioBytes, byteLength);
+
+  // Create JSON payload
+  StaticJsonDocument<200> doc;
+  doc["audio"] = base64Audio;
+  doc["sample_rate"] = SAMPLE_RATE;
+  doc["device_id"] = DEVICE_ID;
+
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+
+  // Send HTTP POST request to calibration endpoint
+  http.begin(wifiClient, CALIBRATE_URL);
+  http.addHeader("Content-Type", "application/json");
+
+  int httpResponseCode = http.POST(jsonPayload);
+
+  bool success = false;
+  if (httpResponseCode > 0)
+  {
+    String response = http.getString();
+
+    if (httpResponseCode == 200)
+    {
+#if ENABLE_SERIAL_DEBUG
+      // Parse response to show progress
+      StaticJsonDocument<256> responseDoc;
+      DeserializationError error = deserializeJson(responseDoc, response);
+
+      if (!error)
+      {
+        const char *status = responseDoc["status"];
+        float progress = responseDoc["progress"];
+        Serial.printf("      Progress: %.1f%% - %s\n", progress, status);
+      }
+#endif
+      success = true;
+    }
+    else
+    {
+#if ENABLE_SERIAL_DEBUG
+      Serial.printf("⚠️  Calibration HTTP Error: %d\n", httpResponseCode);
+#endif
+    }
+  }
+  else
+  {
+#if ENABLE_SERIAL_DEBUG
+    Serial.printf("❌ Calibration request failed: %s\n", http.errorToString(httpResponseCode).c_str());
+#endif
+  }
+
+  http.end();
+  return success;
+}
+
+void blinkLED(int times, int delayMs)
+{
+#if ENABLE_LED_FEEDBACK
+  for (int i = 0; i < times; i++)
+  {
     digitalWrite(LED_PIN, HIGH);
     delay(delayMs);
     digitalWrite(LED_PIN, LOW);
     delay(delayMs);
   }
-  #endif
+#endif
 }
