@@ -1,0 +1,10 @@
+{
+  "feature_mean": [
+    -39.19651086408441
+  ],
+  "feature_std": [
+    18.331270755037643
+  ],
+  "n_mel_bands": 1,
+  "n_time_frames": 100
+}

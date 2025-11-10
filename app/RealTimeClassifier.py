@@ -15,6 +15,11 @@ class RealTimeClassifier:
         self.audio_buffer = []
         self.buffer_size = int(SAMPLE_RATE * DURATION)
         self.calibration_phase = True
+        # If True, ignore VAD decisions and run classifier when audio level exceeds
+        # `force_rms_threshold`. This is a debug/fallback mode to help diagnose
+        # situations where VAD filters out all activity.
+        self.force_classify = False
+        self.force_rms_threshold = 1e-4
         
     def audio_callback(self, indata, frames, time, status):
         """Callback for real-time audio capture"""
@@ -141,6 +146,16 @@ class RealTimeClassifier:
         print("\n" + "="*80)
         print("VOICE ACTIVITY DETECTION + NOISE CLASSIFICATION")
         print("="*80)
+        # Offer an optional debug mode to bypass VAD if needed
+        try:
+            force_choice = input("\nIgnore VAD and classify continuously when input level is above a small threshold? (y/N): ").strip().lower()
+            if force_choice == 'y':
+                self.force_classify = True
+                print(f"⚠️  Force-classify mode enabled (RMS threshold={self.force_rms_threshold})")
+        except Exception:
+            # Non-interactive environments may raise; default to False
+            self.force_classify = False
+
         print("Phase 1: VAD Calibration (3.5 seconds of silence needed)")
         print("Phase 2: Real-time classification with VAD pre-filtering")
         print("Press Ctrl+C to stop")
@@ -227,11 +242,31 @@ class RealTimeClassifier:
                                 if not isinstance(predicted_class, str) or confidence < 0 or confidence > 1:
                                     print(f"Warning: Invalid prediction results: {predicted_class}, {confidence}")
                                     continue
+                                
+                                # Filter to only show allowed classes
+                                allowed_classes = ["Loud Talking", "Whispering"]
+                                if predicted_class not in allowed_classes:
+                                    # If predicted class is not in allowed list, classify as silence
+                                    predicted_class = "Silence"
+                                    confidence = 1.0 - confidence  # Invert confidence for silence
+                                    all_probs = np.zeros(len(TARGET_CLASSES))
                             else:
-                                # No voice activity - classify as silence
-                                predicted_class = "Silence"
-                                confidence = vad_confidence
-                                all_probs = np.zeros(len(TARGET_CLASSES))  # All zeros for non-target classes
+                                # No voice activity according to VAD. If force_classify is enabled
+                                # and the audio RMS indicates non-trivial input, run the
+                                # classifier anyway (useful for debugging pipeline issues).
+                                if self.force_classify and audio_rms > self.force_rms_threshold:
+                                    predicted_class, confidence, all_probs = self.analyzer.predict_audio(audio_resampled)
+                                    # Filter to only show allowed classes
+                                    allowed_classes = ["Loud Talking", "Whispering"]
+                                    if predicted_class not in allowed_classes:
+                                        predicted_class = "Silence"
+                                        confidence = 1.0 - confidence
+                                        all_probs = np.zeros(len(TARGET_CLASSES))
+                                else:
+                                    # Classify as silence
+                                    predicted_class = "Silence"
+                                    confidence = vad_confidence
+                                    all_probs = np.zeros(len(TARGET_CLASSES))  # All zeros for non-target classes
                             
                             # Debug all_probs shape
                             if prediction_count % 20 == 1:  # Debug every 20th prediction
@@ -296,9 +331,23 @@ class RealTimeClassifier:
                                 
                                 print("📈 All Class Probabilities:")
                                 
-                                # Display extended probabilities including Silence
+                                # Only display allowed classes: Silence, Loud Talking, Whispering
+                                allowed_display_classes = ['Silence', 'Loud Talking', 'Whispering']
+                                
+                                # Create probability pairs for allowed classes only
+                                prob_pairs = []
                                 extended_classes = ['Silence'] + TARGET_CLASSES
-                                prob_pairs = [(extended_classes[i], extended_probs[i]) for i in range(len(extended_classes))]
+                                
+                                for class_name in allowed_display_classes:
+                                    if class_name in extended_classes:
+                                        idx = extended_classes.index(class_name)
+                                        if idx < len(extended_probs):
+                                            prob_pairs.append((class_name, extended_probs[idx]))
+                                        else:
+                                            prob_pairs.append((class_name, 0.0))
+                                    else:
+                                        prob_pairs.append((class_name, 0.0))
+                                
                                 prob_pairs.sort(key=lambda x: x[1], reverse=True)
                                 
                                 for class_name, prob in prob_pairs:
@@ -363,9 +412,9 @@ class RealTimeClassifier:
             
             print("\nClass Distribution:")
             
-            # Include Silence in the summary
-            extended_classes = ['Silence'] + TARGET_CLASSES
-            for class_name in extended_classes:
+            # Only show allowed classes in summary
+            allowed_display_classes = ['Silence', 'Loud Talking', 'Whispering']
+            for class_name in allowed_display_classes:
                 count = class_counts.get(class_name, 0)
                 percentage = (count / total_predictions * 100) if total_predictions > 0 else 0
                 bar_length = int(percentage / 100 * 40)
@@ -375,7 +424,7 @@ class RealTimeClassifier:
             
             # Average confidence per class
             print("\nAverage Confidence by Class:")
-            for class_name in extended_classes:
+            for class_name in allowed_display_classes:
                 class_data = df[df['predicted_class'] == class_name]
                 if len(class_data) > 0:
                     avg_conf = class_data['confidence'].mean()
