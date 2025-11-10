@@ -9,8 +9,8 @@
 // ───────────────────────────────────────────────────────────
 //  WIFI CONFIGURATION
 // ───────────────────────────────────────────────────────────
-#define WIFI_SSID "noise"        // ⚠️ CHANGE THIS
-#define WIFI_PASSWORD "12345678" // ⚠️ CHANGE THIS
+#define WIFI_SSID "rudrhotspot"        // ⚠️ CHANGE THIS
+#define WIFI_PASSWORD "1234567890" // ⚠️ CHANGE THIS
 #define WIFI_TIMEOUT_MS 20000    // 20 second timeout
 
 // Server configuration for data transmission
@@ -20,14 +20,22 @@
 // ───────────────────────────────────────────────────────────
 //  DEVICE IDENTIFICATION
 // ───────────────────────────────────────────────────────────
-#define DEVICE_ID "ESP32_Node_01"           // Unique ID per device
+#define DEVICE_ID "ESP32CAM_Node_01"        // Unique ID per device
 #define DEVICE_LOCATION "Library_Floor1_NE" // Physical location
 
 // ───────────────────────────────────────────────────────────
-//  HW-484 ANALOG MICROPHONE CONFIGURATION
+//  HW-484 ANALOG MICROPHONE CONFIGURATION FOR ESP32-CAM
 // ───────────────────────────────────────────────────────────
-#define MIC_ANALOG_PIN 36 // A0 pin → GPIO36 (ADC1_CH0, VP)
-                          // Wiring: A0→GPIO36, G→GND, +→3.3V
+// PRIMARY OPTION: GPIO12 (ADC2_CH5) - Standard configuration
+#define MIC_ANALOG_PIN 12 // A0 pin → GPIO12 (ADC2_CH5) - Available on ESP32-CAM
+                          // Wiring: A0→GPIO12, G→GND, +→3.3V or 5V
+                          // Note: GPIO12 is available on ESP32-CAM expansion connector
+
+// ALTERNATIVE OPTIONS if GPIO12 doesn't work:
+// #define MIC_ANALOG_PIN 2  // GPIO2 (ADC2_CH2) - Alternative option
+// #define MIC_ANALOG_PIN 13 // GPIO13 (ADC2_CH4) - Another alternative
+// #define MIC_ANALOG_PIN 15 // GPIO15 (ADC2_CH3) - Use with caution (camera related)
+
 #define ADC_RESOLUTION 12 // 12-bit ADC (0-4095)
 #define ADC_VREF 3.3      // Reference voltage
 
@@ -41,7 +49,8 @@
 // ───────────────────────────────────────────────────────────
 //  CALIBRATION SETTINGS
 // ───────────────────────────────────────────────────────────
-#define CALIBRATION_SAMPLES 4 // Number of 1-second samples for VAD calibration (3.5s total)
+#define CALIBRATION_SAMPLES 2 // Number of calibration samples
+#define CALIBRATION_DURATION_MS 500 // Duration of each calibration sample (0.5 seconds)
 
 // ───────────────────────────────────────────────────────────
 //  TRANSMISSION SETTINGS
@@ -58,6 +67,10 @@
 // ───────────────────────────────────────────────────────────
 #define ENABLE_SERIAL_DEBUG true // Enable debug output
 #define SERIAL_BAUD 115200
+
+// TESTING OPTIONS
+#define ENABLE_TEST_TONE false    // Generate test tone if microphone fails
+#define TEST_TONE_FREQ 1000       // Test tone frequency in Hz
 
 // ───────────────────────────────────────────────────────────
 //  MEMORY ALLOCATION
